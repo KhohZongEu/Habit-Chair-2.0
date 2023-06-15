@@ -3,6 +3,6 @@
 Code Must be opened using Vscode PlatformIO
 # Functions CheckList
 - [x] Load Cell Data Collection
-- [ ] Load Cell Data Processing
+- [X] Load Cell Data Processing
 - [x] Firebase Communication
 - [ ] Alert System
