@@ -5,6 +5,7 @@
 unsigned long previousMillis;
 bool ledState;
 bool occupancy = 1;
+bool online = 1;
 long Hrecord = 0;
 long Mrecord = 0;
 long Srecord = 0;
@@ -16,7 +17,11 @@ const char *ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 28800;//timezone change
 const int daylightOffset_sec = 0; // Set daylight offset difference
 byte timeDigits[2]={0,0};
-//------------------------------DF Player Mini------------------------------
+//-----------------------------Alert System------------------------------
+#define vibrator 5
+bool vibrationState;
+unsigned long vibratorLast;
+
 #include <DFPlayerMini_Fast.h>
 #include <SoftwareSerial.h>  //file 0000 is bad posture, 0001 is sitting time, 0002 is left leg, 0003 is right leg
 SoftwareSerial mySerial(25,26);//Tx,Rx
@@ -27,8 +32,8 @@ bool audioPlaying;
 #include "WiFi.h"
 #include <Firebase_ESP_Client.h>
 
-#define wifi_ssid "Nemo5"
-#define wifi_password "Nem0123456789"
+#define wifi_ssid "CEC"
+#define wifi_password "CEC_2018"
 
 #define API_KEY "AIzaSyAHmdwFtSJ7YgBuNHSVdR9mTFHPBYi3Ta4"
 #define DATABASE_URL "https://habit-chair-default-rtdb.asia-southeast1.firebasedatabase.app"
@@ -42,28 +47,39 @@ unsigned long sendDataPrevMillis = 0;
 int count = 0;
 bool signupOK = false;
 
+byte M = 0;
 //----------------Load Cell-------------------------
 #include "HX711.h"
-#define FRONT_LEFT_DOUT_PIN 19 //Blue
-#define FRONT_LEFT_SCK_PIN 18 //Green
-#define FRONT_RIGHT_DOUT_PIN 23 //Orange
-#define FRONT_RIGHT_SCK_PIN 22 //Yellow
-#define BACK_LEFT_DOUT_PIN 16 // White RX
-#define BACK_LEFT_SCK_PIN 17 // Brown TX
-#define BACK_RIGHT_DOUT_PIN 32 //Grey
-#define BACK_RIGHT_SCK_PIN 33 //Purple
+#define FRONT_LEFT_DOUT_PIN 32 //Blue
+#define FRONT_LEFT_SCK_PIN 33 //Green
+#define FRONT_RIGHT_DOUT_PIN 19 //Orange19
+#define FRONT_RIGHT_SCK_PIN 18 //Yellow18
+#define BACK_LEFT_DOUT_PIN 17 // White TX
+#define BACK_LEFT_SCK_PIN 16 // Brown RX
+#define BACK_RIGHT_DOUT_PIN 23 //Grey
+#define BACK_RIGHT_SCK_PIN 22 //Purple
 
 HX711 BackLscale;
 HX711 BackRscale;
 HX711 FrontLscale;
 HX711 FrontRscale;
 
-int backRightScale = 17;
-int backLeftScale = 16;
-int frontRightScale = 13;
-int frontLeftScale = 12;
 
+unsigned long prevTrig = 0;
+uint8_t trig = 0;
+uint8_t backRightScale = 0;
+uint8_t backLeftScale = 0;
+uint8_t frontRightScale = 0;
+uint8_t frontLeftScale = 0;
+uint8_t seat = 0;
+uint8_t back = 0;
+uint8_t front = 0;
+uint8_t left = 0;
+uint8_t right = 0;
+uint8_t warning = 0;
+int violations = 0;
 byte postureState = 0;
+
 
 void FirebaseInit(){
     /* Assign the api key (required) */
@@ -98,19 +114,22 @@ void WifiConnect(){
 
 void setup() {
   Serial.begin(115200);
+  mySerial.begin(9600);
   pinMode(Running,OUTPUT);
+  pinMode(vibrator,OUTPUT);
+  myMP3.begin(mySerial,true);
+  myMP3.volume(30);
   //configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  
   //WifiConnect();
-  
   FrontLscale.begin(FRONT_LEFT_DOUT_PIN, FRONT_LEFT_SCK_PIN);
   FrontLscale.set_scale(-54824.7012);
   FrontLscale.tare();
   FrontRscale.begin(FRONT_RIGHT_DOUT_PIN, FRONT_RIGHT_SCK_PIN);
-  FrontRscale.set_scale(-60794.6821);
+  FrontRscale.set_scale(-60354.92901);
   FrontRscale.tare();
   BackLscale.begin(BACK_LEFT_DOUT_PIN,BACK_LEFT_SCK_PIN);
-  BackLscale.set_scale(57595.9616);
+  BackLscale.set_scale();
+  BackLscale.set_scale(58138.37233);
   BackLscale.tare();
   BackRscale.begin(BACK_RIGHT_DOUT_PIN,BACK_RIGHT_SCK_PIN);
   BackRscale.set_scale(56341.4634);
@@ -155,18 +174,6 @@ void calculateTime(){
   }
 }
 
-void sendDataToFirebase(){
-    if (Firebase.ready() && signupOK && (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0)){
-      sendDataPrevMillis = millis();
-      Firebase.RTDB.setInt(&fbdo, "data/time/hours", 5);
-      Firebase.RTDB.setInt(&fbdo, "data/time/minutes", 7);
-      Firebase.RTDB.setInt(&fbdo, "data/time/seconds", 4);
-      Firebase.RTDB.setInt(&fbdo, "data/violations/times", 34);  
-      Firebase.RTDB.setInt(&fbdo, "data/online/state", 78);
-      Firebase.RTDB.setInt(&fbdo, "data/occupancy/status", 1);
-  }
-}
-
 void receiveDataFromFirebase(){
   if (Firebase.ready() && signupOK && (millis() - sendDataPrevMillis > 1000 || sendDataPrevMillis == 0)) {
     sendDataPrevMillis = millis();
@@ -182,7 +189,7 @@ void receiveDataFromFirebase(){
     }
     if (Firebase.RTDB.getInt(&fbdo, "data/time/minutes")) {
       if (fbdo.dataType() == "int") {
-        byte M = fbdo.intData();
+        M = fbdo.intData();
         Serial.print("Minutes: ");
         Serial.println(M);
       }
@@ -200,75 +207,79 @@ void receiveDataFromFirebase(){
     else {
       Serial.println(fbdo.errorReason());
     }
-    if (Firebase.RTDB.getInt(&fbdo, "data/violations/times")) {
-      if (fbdo.dataType() == "int") {
-        byte T = fbdo.intData();
-        Serial.print("Violations: ");
-        Serial.println(T);
-      }
-    }
-    else {
-      Serial.println(fbdo.errorReason());
-    }
-    if (Firebase.RTDB.getInt(&fbdo, "data/online/state")) {
-      if (fbdo.dataType() == "int") {
-        byte St = fbdo.intData();
-        Serial.print("Online: ");
-        Serial.println(St);
-      }
-    }
-    else {
-      Serial.println(fbdo.errorReason());
-    }
-    if (Firebase.RTDB.getInt(&fbdo, "data/occupancy/status")) {
-      if (fbdo.dataType() == "int") {
-        byte Sts = fbdo.intData();
-        Serial.print("Occupancy: ");
-        Serial.println(Sts);
-      }
-    }
-    else {
-      Serial.println(fbdo.errorReason());
-    }
+  }
 }
+
+void vibratorRun(){
+  if(millis()-vibratorLast >= 1000){
+    vibratorLast = millis();
+    if(vibrationState==0){
+      vibrationState = 1;
+    }else{
+      vibrationState = 0;
+    }
+    digitalWrite(vibrator,vibrationState);
+  }
+}
+
+void sittingTimeEnforce(){
+  Serial.println(M);
+  
+  if(M > 45){
+    postureState = 5;
+    M = 0;
+  }
 }
 
 void getLoadCellReading(){
-  backLeftScale = BackLscale.get_units(10);
+  Serial.println("---------------------------------------------");
+  backLeftScale = BackLscale.get_units(5);
+  frontLeftScale = FrontLscale.get_units(5);
+  backRightScale = BackRscale.get_units(5);
+  frontRightScale = FrontRscale.get_units(5);
   Serial.print("Back Left: ");
-  Serial.println(BackLscale.get_units(10));
-  backRightScale = BackRscale.get_units(10);
+  Serial.println(backLeftScale);
   Serial.print("Back Right: ");
-  Serial.println(BackRscale.get_units(10));
-  frontRightScale = FrontRscale.get_units(10);
+  Serial.println(backRightScale);
   Serial.print("Front Left: ");
-  Serial.println(FrontLscale.get_units(10));
-  frontLeftScale = FrontRscale.get_units(10);
+  Serial.println(frontLeftScale);
   Serial.print("Front Right: ");
-  Serial.println(FrontRscale.get_units(10));
+  Serial.println(frontRightScale);
 }
 
 void processLoadCellReading(){
-  if((abs((frontLeftScale+frontRightScale)-(backLeftScale+backRightScale))/2<=3) && (abs((frontLeftScale+backLeftScale)-(frontRightScale+backRightScale))/2<2)){
-    Serial.println("Posture is correct");
-    postureState = 1;
-    occupancy = 1;
-  }else if(abs((backLeftScale+backRightScale)-(frontLeftScale+frontRightScale))/2 > 3){
-    Serial.println("User is Leaning Back");
-    postureState = 2;
-    occupancy = 1;
-  }else if(abs((frontLeftScale+backLeftScale)-(frontRightScale+backRightScale))/2 > 2){
-    Serial.println("User is Leaning Left");
-    postureState = 3;
-    occupancy = 1;
-  }else if(abs((frontRightScale+backRightScale)-(frontLeftScale+backLeftScale))/2 > 2){
-    Serial.println("User is Leaning Right");
-    postureState = 4;
-    occupancy = 1;
-  }else if((frontRightScale+frontLeftScale+backLeftScale+backRightScale)/4 < 5){
+  back = (backLeftScale+backRightScale)/2;
+  front = (frontLeftScale+frontRightScale)/2;
+  right = (backRightScale+frontRightScale)/2;
+  left = (backLeftScale+frontLeftScale)/2;
+
+  if (backLeftScale<2 && backRightScale<2 && frontLeftScale<2 && frontRightScale<2){
     Serial.println("Chair is unoccupied");
     postureState = 1;
     occupancy = 0;
+  }else if((abs(backRightScale-backLeftScale) <= 4) && (abs(frontLeftScale-frontRightScale) <= 4) && (abs(left-right) <= 4) && (abs(back-front) <= 7)){
+    Serial.println("Posture is correct");
+    postureState = 1;
+    occupancy = 1;
+  }else if(abs(front-back) > 3  && (abs(left-right) <=4)){
+    Serial.println("User is leaning forward");
+    postureState = 3;
+    occupancy = 1;
+  }else if((backRightScale<10) && abs(back-front) <= 7){
+    Serial.println("User is leaning Left");
+    postureState = 4;
+    occupancy = 1;
+  }else if((backLeftScale<10) && abs(back-front <= 7)){  
+    Serial.println("User is leaning right");
+    postureState = 5;
+    occupancy = 1;
+  }else if(abs(front-back)<2 && (abs(left-right) <= 4)){
+    Serial.println("User is leaning back");
+    postureState = 2;
+    occupancy = 1;
+  }else {
+    Serial.println("Posture is out of detailed range");
+    postureState = 2;
   }
 }
 
@@ -279,29 +290,93 @@ void rawLoadCellProcess(){
 void audioAlert(){
   audioPlaying = myMP3.isPlaying();
   switch(postureState){
-    case 1:
+    case 1: //Correct Posture
     
     break;
-
-    case 2:
-      if(audioPlaying == false){
-        myMP3.volume(30);
-        myMP3.play(2);
+    case 2: //Leaning back
+      trig++;
+      if(millis() - previousMillis < 10000){
+       trig = 0;
       }
+      if(trig > 2){
+        if(audioPlaying == false){
+          myMP3.volume(30);
+          myMP3.play(1);
+        }
+        warning++;
+        if(warning>3){
+         vibratorRun();
+        }
+        trig = 0;
+        }
     break;
-
-    case 3:
-      if(audioPlaying == false){
-        myMP3.volume(30);
-        myMP3.play(3);
+    case 3://Leaning forward
+      trig++;
+      if(millis() - previousMillis < 10000){
+       trig = 0;
       }
+      if(trig > 2){
+        if(audioPlaying == false){
+          myMP3.volume(30);
+          myMP3.play(2);
+        }
+        warning++;
+        if(warning>3){
+         vibratorRun();
+        }
+        trig = 0;
+        }
     break;
-
-    case 4:
-      if(audioPlaying == false){
-        myMP3.volume(30);
-        myMP3.play(4);
+    case 4://Leaning left
+      trig++;
+      if(millis() - previousMillis < 10000){
+       trig = 0;
       }
+      if(trig > 2){
+        if(audioPlaying == false){
+          myMP3.volume(30);
+          myMP3.play(3);
+        }
+        warning++;
+        if(warning>3){
+         vibratorRun();
+        }
+        trig = 0;
+        }
+    break;
+    case 5://Leaning right
+      trig++;
+      if(millis() - previousMillis < 10000){
+       trig = 0;
+      }
+      if(trig > 2){
+        if(audioPlaying == false){
+          myMP3.volume(30);
+          myMP3.play(4);
+        }
+        warning++;
+        if(warning>3){
+         vibratorRun();
+        }
+        trig = 0;
+        }
+    break;
+    case 6: //Out of range
+      trig++;
+      if(millis() - previousMillis < 10000){
+       trig = 0;
+      }
+      if(trig > 2){
+        if(audioPlaying == false){
+          myMP3.volume(30);
+          myMP3.play(5);
+        }
+        warning++;
+        if(warning>3){
+         vibratorRun();
+        }
+        trig = 0;
+        }
     break;
   }
 }
@@ -318,14 +393,30 @@ void ledBlink(){
   }
 }
 
+void sendDataToFirebase(){
+    if (Firebase.ready() && signupOK && (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0)){
+      sendDataPrevMillis = millis();
+      Firebase.RTDB.setInt(&fbdo, "data/violations/times", violations);  
+      Firebase.RTDB.setInt(&fbdo, "data/online/state", online);
+      Firebase.RTDB.setInt(&fbdo, "data/occupancy/status", occupancy);
+      Firebase.RTDB.setInt(&fbdo, "data/sensor/backleft", backLeftScale);      
+      Firebase.RTDB.setInt(&fbdo, "data/sensor/backright", backRightScale);
+      Firebase.RTDB.setInt(&fbdo, "data/sensor/frontleft", frontLeftScale);
+      Firebase.RTDB.setInt(&fbdo, "data/sensor/frontright", frontRightScale);
+      Firebase.RTDB.setInt(&fbdo, "data/sensor/seat", seat);
+  }
+}
+
 void loop() {
   ledBlink();
+  Serial.println("Starting...");
   //getLocalTime();
   //calculateTime();
   //rawLoadCellProcess();
-  sendDataToFirebase();
-  receiveDataFromFirebase();
+  //sendDataToFirebase();
+  //receiveDataFromFirebase();
   getLoadCellReading();
   processLoadCellReading();
   audioAlert();
+  //vibratorRun(); 
 }
