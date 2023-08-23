@@ -1,5 +1,8 @@
 #include <Arduino.h>
 
+TaskHandle_t receiveData;
+
+
 #define Running 2
 #define runInterval 500
 unsigned long previousMillis;
@@ -32,8 +35,8 @@ bool audioPlaying;
 #include "WiFi.h"
 #include <Firebase_ESP_Client.h>
 
-#define wifi_ssid "CEC"
-#define wifi_password "CEC_2018"
+#define wifi_ssid "Nemo5"
+#define wifi_password "Nem0123456789"
 
 #define API_KEY "AIzaSyAHmdwFtSJ7YgBuNHSVdR9mTFHPBYi3Ta4"
 #define DATABASE_URL "https://habit-chair-default-rtdb.asia-southeast1.firebasedatabase.app"
@@ -64,7 +67,8 @@ HX711 BackRscale;
 HX711 FrontLscale;
 HX711 FrontRscale;
 
-
+uint8_t silent = 0;
+uint8_t extend = 0;
 unsigned long prevTrig = 0;
 uint8_t trig = 0;
 uint8_t backRightScale = 0;
@@ -112,6 +116,43 @@ void WifiConnect(){
   FirebaseInit();
 }
 
+void receiveDataFromFirebase(){
+    if (Firebase.ready() && signupOK && (millis() - sendDataPrevMillis > 1000 || sendDataPrevMillis == 0)) {
+    sendDataPrevMillis = millis();
+    if (Firebase.RTDB.getInt(&fbdo, "data/extended/state")) {
+      if (fbdo.dataType() == "int") {
+        extend = fbdo.intData();
+        Serial.print("Extended time: ");
+        Serial.println(extend);
+      }
+    }
+    else {
+      Serial.println(fbdo.errorReason());
+    }
+    if (Firebase.RTDB.getInt(&fbdo, "data/time/minutes")) {
+      if (fbdo.dataType() == "int") {
+        M = fbdo.intData();
+        Serial.print("Minutes: ");
+        Serial.println(M);
+      }
+    }
+    else {
+      Serial.println(fbdo.errorReason());
+    }
+    if (Firebase.RTDB.getInt(&fbdo, "data/silentMode/state")) {
+      if (fbdo.dataType() == "int") {
+        silent = fbdo.intData();
+        Serial.print("Silent Mode: ");
+        Serial.println(silent);
+      }
+    }
+    else {
+      Serial.println(fbdo.errorReason());
+    }
+  }
+  
+}
+
 void setup() {
   Serial.begin(115200);
   mySerial.begin(9600);
@@ -119,6 +160,8 @@ void setup() {
   pinMode(vibrator,OUTPUT);
   myMP3.begin(mySerial,true);
   myMP3.volume(30);
+  //WifiConnect();
+ //FirebaseInit();
   //configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   //WifiConnect();
   FrontLscale.begin(FRONT_LEFT_DOUT_PIN, FRONT_LEFT_SCK_PIN);
@@ -174,41 +217,7 @@ void calculateTime(){
   }
 }
 
-void receiveDataFromFirebase(){
-  if (Firebase.ready() && signupOK && (millis() - sendDataPrevMillis > 1000 || sendDataPrevMillis == 0)) {
-    sendDataPrevMillis = millis();
-    if (Firebase.RTDB.getInt(&fbdo, "data/time/hours")) {
-      if (fbdo.dataType() == "int") {
-        byte H = fbdo.intData();
-        Serial.print("Hours: ");
-        Serial.println(H);
-      }
-    }
-    else {
-      Serial.println(fbdo.errorReason());
-    }
-    if (Firebase.RTDB.getInt(&fbdo, "data/time/minutes")) {
-      if (fbdo.dataType() == "int") {
-        M = fbdo.intData();
-        Serial.print("Minutes: ");
-        Serial.println(M);
-      }
-    }
-    else {
-      Serial.println(fbdo.errorReason());
-    }
-    if (Firebase.RTDB.getInt(&fbdo, "data/time/seconds")) {
-      if (fbdo.dataType() == "int") {
-        byte S = fbdo.intData();
-        Serial.print("Seconds: ");
-        Serial.println(S);
-      }
-    }
-    else {
-      Serial.println(fbdo.errorReason());
-    }
-  }
-}
+
 
 void vibratorRun(){
   if(millis()-vibratorLast >= 1000){
@@ -265,6 +274,7 @@ void processLoadCellReading(){
     Serial.println("User is leaning forward");
     postureState = 3;
     occupancy = 1;
+    trig++;
   }else if((backRightScale<10) && abs(back-front) <= 7){
     Serial.println("User is leaning Left");
     postureState = 4;
@@ -277,7 +287,10 @@ void processLoadCellReading(){
     Serial.println("User is leaning back");
     postureState = 2;
     occupancy = 1;
-  }else {
+  }else if(M > 45){
+    Serial.println("Sitting Time Too long");
+    postureState = 6;
+  }else{
     Serial.println("Posture is out of detailed range");
     postureState = 2;
   }
@@ -291,92 +304,88 @@ void audioAlert(){
   audioPlaying = myMP3.isPlaying();
   switch(postureState){
     case 1: //Correct Posture
-    
+      Serial.println("------------------FINAL-------------------------");
+      Serial.println("Posture is correct");
     break;
     case 2: //Leaning back
-      trig++;
-      if(millis() - previousMillis < 10000){
-       trig = 0;
-      }
-      if(trig > 2){
+      Serial.println("------------------FINAL-------------------------");
+      if(silent == 0){
         if(audioPlaying == false){
           myMP3.volume(30);
           myMP3.play(1);
+          trig = 0;
+          Serial.println("Unsilent Back");
         }
-        warning++;
-        if(warning>3){
-         vibratorRun();
-        }
-        trig = 0;
-        }
+      }
+      warning++;
+      if(warning>3){
+        vibratorRun();
+        Serial.println("Backup back");
+        warning = 0;
+      } 
     break;
     case 3://Leaning forward
-      trig++;
-      if(millis() - previousMillis < 10000){
-       trig = 0;
-      }
-      if(trig > 2){
+      Serial.println("------------------FINAL-------------------------");
+      if(silent == 0){
         if(audioPlaying == false){
           myMP3.volume(30);
           myMP3.play(2);
+          Serial.println("Unsilent Forward");
         }
-        warning++;
-        if(warning>3){
-         vibratorRun();
-        }
-        trig = 0;
-        }
+      }
+      warning++;
+      if(warning>3){
+        vibratorRun();
+        Serial.println("Backup Forward");
+        warning = 0;
+      } 
     break;
     case 4://Leaning left
-      trig++;
-      if(millis() - previousMillis < 10000){
-       trig = 0;
-      }
-      if(trig > 2){
-        if(audioPlaying == false){
-          myMP3.volume(30);
-          myMP3.play(3);
-        }
-        warning++;
-        if(warning>3){
-         vibratorRun();
-        }
-        trig = 0;
-        }
-    break;
-    case 5://Leaning right
-      trig++;
-      if(millis() - previousMillis < 10000){
-       trig = 0;
-      }
-      if(trig > 2){
+      Serial.println("------------------FINAL-------------------------");
+      if(silent == 0){
         if(audioPlaying == false){
           myMP3.volume(30);
           myMP3.play(4);
+          Serial.println("Unsilent Left");
         }
-        warning++;
-        if(warning>3){
-         vibratorRun();
-        }
-        trig = 0;
-        }
+      }
+      warning++;
+      if(warning>3){
+        vibratorRun();
+        Serial.println("Backup Left");
+        warning = 0;
+      }
+    break;
+    case 5://Leaning right
+      Serial.println("------------------FINAL-------------------------");
+      if(silent ==0){
+        if(audioPlaying == false){
+          myMP3.volume(30);
+          myMP3.play(3);
+          Serial.println("Unsilent Right");
+        } 
+      }
+      warning++;
+      if(warning>3){
+        vibratorRun();
+        Serial.println("Backup Right");
+        warning = 0;
+      }
     break;
     case 6: //Out of range
-      trig++;
-      if(millis() - previousMillis < 10000){
-       trig = 0;
-      }
-      if(trig > 2){
+      Serial.println("------------------FINAL-------------------------");
+      if(silent == 0){
         if(audioPlaying == false){
           myMP3.volume(30);
           myMP3.play(5);
         }
-        warning++;
-        if(warning>3){
-         vibratorRun();
-        }
-        trig = 0;
-        }
+      }
+      warning++;
+      if(warning>3){
+        vibratorRun();
+        warning = 0;
+      }
+      Serial.println("Out of Range");
     break;
   }
 }
@@ -413,8 +422,8 @@ void loop() {
   //getLocalTime();
   //calculateTime();
   //rawLoadCellProcess();
-  //sendDataToFirebase();
-  //receiveDataFromFirebase();
+  sendDataToFirebase();
+  receiveDataFromFirebase();
   getLoadCellReading();
   processLoadCellReading();
   audioAlert();
