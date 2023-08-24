@@ -5,4 +5,4 @@ Code Must be opened using Vscode PlatformIO
 - [x] Load Cell Data Collection
 - [X] Load Cell Data Processing
 - [x] Firebase Communication
-- [ ] Alert System
+- [x] Alert System
