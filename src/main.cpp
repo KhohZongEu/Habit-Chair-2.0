@@ -274,25 +274,31 @@ void processLoadCellReading(){
     Serial.println("User is leaning forward");
     postureState = 3;
     occupancy = 1;
+    warning++;
     trig++;
   }else if((backRightScale<10) && abs(back-front) <= 7){
     Serial.println("User is leaning Left");
     postureState = 4;
     occupancy = 1;
+    warning++;
   }else if((backLeftScale<10) && abs(back-front <= 7)){  
     Serial.println("User is leaning right");
     postureState = 5;
     occupancy = 1;
+    warning++;
   }else if(abs(front-back)<2 && (abs(left-right) <= 4)){
     Serial.println("User is leaning back");
-    postureState = 2;
-    occupancy = 1;
+    //postureState = 2;
+    //warning++;
+    //occupancy = 1;
   }else if(M > 45){
     Serial.println("Sitting Time Too long");
     postureState = 6;
+    warning++;
   }else{
     Serial.println("Posture is out of detailed range");
     postureState = 2;
+    warning++;
   }
 }
 
@@ -317,7 +323,6 @@ void audioAlert(){
           Serial.println("Unsilent Back");
         }
       }
-      warning++;
       if(warning>3){
         vibratorRun();
         Serial.println("Backup back");
@@ -333,7 +338,6 @@ void audioAlert(){
           Serial.println("Unsilent Forward");
         }
       }
-      warning++;
       if(warning>3){
         vibratorRun();
         Serial.println("Backup Forward");
@@ -349,7 +353,6 @@ void audioAlert(){
           Serial.println("Unsilent Left");
         }
       }
-      warning++;
       if(warning>3){
         vibratorRun();
         Serial.println("Backup Left");
@@ -365,7 +368,6 @@ void audioAlert(){
           Serial.println("Unsilent Right");
         } 
       }
-      warning++;
       if(warning>3){
         vibratorRun();
         Serial.println("Backup Right");
@@ -380,13 +382,19 @@ void audioAlert(){
           myMP3.play(5);
         }
       }
-      warning++;
       if(warning>3){
         vibratorRun();
         warning = 0;
       }
       Serial.println("Out of Range");
     break;
+  }
+}
+
+void vibratorControlBackup(){
+  if(warning>3){
+    vibratorRun();
+    warning = 0;
   }
 }
 
